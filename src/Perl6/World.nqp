@@ -535,6 +535,23 @@ class Perl6::World is HLL::World {
         }
     }
 
+    # mixin grammar and actions into language braid the copy to %?LANG
+    method mixin_LANG($lang-name,$grammar-mixin,$actions-mixin?) {
+
+        if !nqp::isnull($grammar-mixin) && !nqp::istype($grammar-mixin,NQPMu) {
+            my $grammar := %*LANG{$lang-name};
+            %*LANG{$lang-name} := $grammar.HOW.mixin($grammar,$grammar-mixin);
+        }
+
+        if !nqp::isnull($actions-mixin) && !nqp::istype($actions-mixin,NQPMu) {
+            my $actions-name := $lang-name ~ '-actions';
+            my $actions := %*LANG{$actions-name};
+            %*LANG{$actions-name} := $actions.HOW.mixin($actions,$actions-mixin);
+        }
+
+        self.install_lexical_symbol(self.cur_lexpad,'%?LANG',self.p6ize_recursive(%*LANG));
+    }
+
     method import_EXPORTHOW($/, $handle) {
         my $EXPORTHOW := $handle.export-how-package;
         if nqp::defined($EXPORTHOW) {
@@ -593,6 +610,8 @@ class Perl6::World is HLL::World {
 
     method add_package_declarator($/, str $pdecl) {
         my $cursor := $/.CURSOR;
+        my $grammar-mixin;
+        my $actions-mixin;
 
         # Compute name of grammar/action entry.
         my $canname := 'package_declarator:sym<' ~ $pdecl ~ '>';
@@ -606,11 +625,8 @@ class Perl6::World is HLL::World {
                     :my $*LINE_NO := HLL::Compiler.lineof($cursor.orig(), $cursor.from(), :cache(1));
                     $<sym>=[$declarator] <.end_keyword> <package_def>
                 }
-            }
-            $cursor.HOW.mixin($cursor, PackageDeclarator.HOW.curry(PackageDeclarator, $canname, $pdecl));
-
-            # This also becomes the current MAIN. Also place it in %?LANG.
-            %*LANG<MAIN> := $cursor.WHAT;
+            };
+            $grammar-mixin := PackageDeclarator.HOW.curry(PackageDeclarator, $canname, $pdecl);
         }
 
         my $actions := %*LANG<MAIN-actions>;
@@ -621,10 +637,11 @@ class Perl6::World is HLL::World {
                     make $<package_def>.ast;
                 }
             };
-            %*LANG<MAIN-actions> := $actions.HOW.mixin($actions,
-                PackageDeclaratorAction.HOW.curry(PackageDeclaratorAction, $canname));
+
+            $actions-mixin := PackageDeclaratorAction.HOW.curry(PackageDeclaratorAction, $canname);
+
         }
-        self.install_lexical_symbol(self.cur_lexpad(), '%?LANG', self.p6ize_recursive(%*LANG));
+        self.mixin_LANG('MAIN',$grammar-mixin,$actions-mixin);
     }
 
     method do_import($/, $handle, $package_source_name, $arglist?) {

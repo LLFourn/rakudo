@@ -4578,6 +4578,9 @@ if $*COMPILING_CORE_SETTING {
     self.panic("don't change grammar in the setting, please!");
 }
 
+        my $grammar-mixin;
+        my $actions-mixin;
+
         if $is_term {
             my role Term[$meth_name, $op] {
                 token ::($meth_name) { $<sym>=[$op] }
@@ -4585,7 +4588,7 @@ if $*COMPILING_CORE_SETTING {
             if +@parts > 1 {
                 self.typed_panic('X::Syntax::AddCategorical::TooManyParts', :$category, :needs(1));
             }
-            self.HOW.mixin(self, Term.HOW.curry(Term, $canname, $opname));
+            $grammar-mixin := Term.HOW.curry(Term, $canname, $opname);
         }
         # Mix an appropraite role into the grammar for parsing the new op.
         elsif $is_oper {
@@ -4595,7 +4598,7 @@ if $*COMPILING_CORE_SETTING {
             if +@parts > 1 {
                 self.typed_panic('X::Syntax::AddCategorical::TooManyParts', :$category, :needs(1));
             }
-            self.HOW.mixin(self, Oper.HOW.curry(Oper, $canname, $opname, $prec, $declarand));
+            $grammar-mixin := Oper.HOW.curry(Oper, $canname, $opname, $prec, $declarand);
         }
         elsif $category eq 'postcircumfix' {
             # Find opener and closer and parse an EXPR between them.
@@ -4615,7 +4618,7 @@ if $*COMPILING_CORE_SETTING {
                     <O('%methodcall')>
                 }
             }
-            self.HOW.mixin(self, Postcircumfix.HOW.curry(Postcircumfix, $canname, @parts[0], @parts[1]));
+            $grammar-mixin := Postcircumfix.HOW.curry(Postcircumfix, $canname, @parts[0], @parts[1]);
         }
         else {
             # Find opener and closer and parse an EXPR between them.
@@ -4632,11 +4635,8 @@ if $*COMPILING_CORE_SETTING {
                     $starter ~ $stopper <semilist>
                 }
             }
-            self.HOW.mixin(self, Circumfix.HOW.curry(Circumfix, $canname, @parts[0], @parts[1]));
+            $grammar-mixin := Circumfix.HOW.curry(Circumfix, $canname, @parts[0], @parts[1]);
         }
-
-        # This also becomes the current MAIN. Also place it in %?LANG.
-        %*LANG<MAIN> := self.WHAT;
 
         # Declarand should get precedence traits.
         if $is_oper && nqp::isconcrete($declarand) {
@@ -4655,8 +4655,7 @@ if $*COMPILING_CORE_SETTING {
                     );
                 }
             };
-            %*LANG<MAIN-actions> := $*ACTIONS.HOW.mixin($*ACTIONS,
-                PostcircumfixAction.HOW.curry(PostcircumfixAction, $canname, $subname));
+            $actions-mixin := PostcircumfixAction.HOW.curry(PostcircumfixAction, $canname, $subname);
         }
         elsif $category eq 'circumfix' {
             my role CircumfixAction[$meth, $subname] {
@@ -4667,8 +4666,7 @@ if $*COMPILING_CORE_SETTING {
                     );
                 }
             };
-            %*LANG<MAIN-actions> := $*ACTIONS.HOW.mixin($*ACTIONS,
-                CircumfixAction.HOW.curry(CircumfixAction, $canname, $subname));
+            $actions-mixin := CircumfixAction.HOW.curry(CircumfixAction, $canname, $subname);
         }
         elsif $is_term {
             my role TermAction[$meth, $subname] {
@@ -4683,13 +4681,13 @@ if $*COMPILING_CORE_SETTING {
                     make QAST::Var.new( :$name, :scope('lexical') );
                 }
             };
-            %*LANG<MAIN-actions> := $*ACTIONS.HOW.mixin($*ACTIONS,
-                $defterm
+            $actions-mixin := $defterm
                     ?? TermAction.HOW.curry(TermActionConstant, $canname, $subname)
-                    !! TermAction.HOW.curry(TermAction, $canname, $subname));
+                    !! TermAction.HOW.curry(TermAction, $canname, $subname);
         }
 
-        $*W.install_lexical_symbol($*W.cur_lexpad(), '%?LANG', $*W.p6ize_recursive(%*LANG));
+        $*W.mixin_LANG('MAIN',$grammar-mixin,$actions-mixin);
+
         return 1;
     }
 
