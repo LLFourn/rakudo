@@ -8,10 +8,11 @@ New in 2016.02
    + Exception.fail now dies reliably outside of a routine
    + fix problem with Str.split with multiple overlapping needles
    + Map.Hash now correctly separates from the Map
-   + Fix rondtrip issues of Instants
+   + Fix roundtrip issues of Instants
    + Specifying ::a now gives proper compile time error (RT #127504)
    + Rakudo jars are now installed in the proper location
    + Enums with a type object now fail with an NYI error
+   + .first(:end) on uncached iterators no longer fails
  + Additions:
    + Buf.unshift/Buf.prepend
    + DateTime.new(y,mo,d,h,mi,s) fully positional candidate
@@ -20,10 +21,11 @@ New in 2016.02
    + REPL now supports multi-line statements (experimental)
  + Efficiency:
    + Str.trans can now be up to 160x faster
+   + @a.chrs noq 3x faster, chrs(@a) now 9x faster
    + Many Map/Hash related functions can be up to 2x as fast
    + Magic increment/decrement on strings 2x as fast
    + Some percentages improvement in object creation, phaser handling,
-     summing, creating failures,
+     summing, creating failures.
    + Object hashes re-implemented using 1 internal hash, instead of 2.
      This results in about 10% less memory usage, and a few % less in CPU
 

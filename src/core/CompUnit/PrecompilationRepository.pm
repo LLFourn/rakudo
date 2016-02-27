@@ -143,6 +143,7 @@ class CompUnit::PrecompilationRepository::Default does CompUnit::PrecompilationR
           "--output=$io",
           $path,
           :out,
+          :err,
         );
         %ENV.DELETE-KEY(<RAKUDO_PRECOMP_WITH>);
         %ENV.DELETE-KEY(<RAKUDO_PRECOMP_LOADING>);
@@ -151,26 +152,28 @@ class CompUnit::PrecompilationRepository::Default does CompUnit::PrecompilationR
         my @result = $proc.out.lines.unique;
         if not $proc.out.close or $proc.status {  # something wrong
             self.store.unlock;
-            push @result, "Return status { $proc.status }\n";
-            $RMD("Precomping $path failed: {@result}") if $RMD;
-            fail @result if @result;
+            $RMD("Precomping $path failed: $proc.status()") if $RMD;
+            Rakudo::Internals.VERBATIM-EXCEPTION(1);
+            die $proc.err.slurp-rest;
         }
-        else {
-            $RMD("Precompiled $path into $io") if $RMD;
-            my str $dependencies = '';
-            for @result -> $dependency {
-                Rakudo::Internals.KEY_SPACE_VALUE(
-                  $dependency,my $dependency-id,my $dependency-src);
-                my $path = self.store.path($compiler-id, $dependency-id);
-                if $path.e {
-                    $dependencies ~= "$dependency\n";
-                    spurt($path ~ '.rev-deps', "$id\n", :append);
-                }
+
+        if $proc.err.slurp-rest -> $warnings {
+            $*ERR.print($warnings);
+        }
+        $RMD("Precompiled $path into $io") if $RMD;
+        my str $dependencies = '';
+        for @result -> $dependency {
+            Rakudo::Internals.KEY_SPACE_VALUE(
+              $dependency,my $dependency-id,my $dependency-src);
+            my $path = self.store.path($compiler-id, $dependency-id);
+            if $path.e {
+                $dependencies ~= "$dependency\n";
+                spurt($path ~ '.rev-deps', "$id\n", :append);
             }
-            spurt($io ~ '.deps', $dependencies);
-            self.store.unlock;
-            True
         }
+        spurt($io ~ '.deps', $dependencies);
+        self.store.unlock;
+        True
     }
 }
 
