@@ -7,6 +7,8 @@ my class X::Experimental        { ... }
 my class X::TypeCheck           { ... }
 
 my role Blob[::T = uint8] does Positional[T] does Stringy is repr('VMArray') is array_type(T) {
+    my int $bpe = (T.^nativesize / 8).Int;  # other then *8 not supported yet
+
     multi method new(Blob:) { nqp::create(self) }
     multi method new(Blob: Blob:D $blob) {
         nqp::splice(nqp::create(self),$blob,0,0)
@@ -40,14 +42,13 @@ my role Blob[::T = uint8] does Positional[T] does Stringy is repr('VMArray') is 
         self!fail-typecheck('allocate',$got)
     }
     multi method allocate(Blob:U: Int $elements, int @values) {
-        self!initialize(nqp::setelems(nqp::create(self),$elements),0,@values)
+        self!spread(nqp::setelems(nqp::create(self),$elements),@values)
     }
     multi method allocate(Blob:U: Int $elements, Blob:D $blob) {
-        self!initialize(nqp::setelems(nqp::create(self),$elements),0,$blob)
+        self!spread(nqp::setelems(nqp::create(self),$elements),$blob)
     }
     multi method allocate(Blob:U: Int $elements, @values) {
-        self!initialize(
-          nqp::setelems(nqp::create(self),$elements),0,Blob.new(@values))
+        self!spread(nqp::setelems(nqp::create(self),$elements),Blob.new(@values))
     }
 
     multi method EXISTS-POS(Blob:D: int \pos) {
@@ -56,7 +57,9 @@ my role Blob[::T = uint8] does Positional[T] does Stringy is repr('VMArray') is 
         );
     }
     multi method EXISTS-POS(Blob:D: Int:D \pos) {
-        pos < nqp::elems(self) && pos >= 0;
+        nqp::p6bool(
+          nqp::islt_i(pos,nqp::elems(self)) && nqp::isge_i(pos,0)
+        );
     }
 
     multi method AT-POS(Blob:D: int \pos) {
@@ -77,22 +80,17 @@ my role Blob[::T = uint8] does Positional[T] does Stringy is repr('VMArray') is 
         nqp::atpos_i(self,$pos);
     }
 
-    multi method Bool(Blob:D:) {
-        nqp::p6bool(nqp::elems(self));
-    }
+    multi method Bool(Blob:D:) { nqp::p6bool(nqp::elems(self)) }
 
-    method elems(Blob:D:) {
-        nqp::p6box_i(nqp::elems(self));
-    }
-    method bytes(Blob:D:) {
-        ceiling(self.elems * ::T.^nativesize / 8);
-    }
+    method elems(Blob:D:)   { nqp::p6box_i(nqp::elems(self)) }
+    method Numeric(Blob:D:) { nqp::p6box_i(nqp::elems(self)) }
+    method Int(Blob:D:)     { nqp::p6box_i(nqp::elems(self)) }
+
+    method bytes(Blob:D:) { nqp::mul_i(nqp::elems(self),$bpe) }
+
     method chars(Blob:D:)       { X::Buf::AsStr.new(method => 'chars').throw }
     multi method Str(Blob:D:)   { X::Buf::AsStr.new(method => 'Str'  ).throw }
     multi method Stringy(Blob:D:) { X::Buf::AsStr.new(method => 'Stringy' ).throw }
-
-    method Numeric(Blob:D:) { self.elems }
-    method Int(Blob:D:)     { self.elems }
 
     method decode(Blob:D: $encoding = 'utf-8') {
         nqp::p6box_s(
@@ -314,10 +312,10 @@ my role Blob[::T = uint8] does Positional[T] does Stringy is repr('VMArray') is 
             nqp::splice(to,self!push-list(action,nqp::create(self),from),0,0)
         }
     }
-    method !initialize(\to,\at,\from) {
+    method !spread(\to,\from) {
         if nqp::elems(from) -> int $values { # something to init with
             my int $elems = nqp::elems(to) - $values;
-            my int $i     = at - $values;
+            my int $i     = -$values;
             nqp::splice(to,from,$i,$values)
               while nqp::isle_i($i = $i + $values,$elems);
 
@@ -627,34 +625,89 @@ multi sub infix:<~>(Blob:D $a, Blob:D $b) {
     nqp::splice($res, $bdc, $alen, $blen);
 }
 
-multi sub prefix:<~^>(Blob:D $a) {
-    $a ~~ Blob[int16] ?? $a.new($a.list.map: 0xFFFF - *) !!
-    $a ~~ Blob[int32] ?? $a.new($a.list.map: 0xFFFFFFFF - *) !!
-                         $a.new($a.list.map: 0xFF - *);
+multi sub prefix:<~^>(Blob:D \a) {
+    my $a        := nqp::decont(a);
+    my int $elems = nqp::elems($a);
+
+    my $r := nqp::create($a);
+    nqp::setelems($a,$elems);
+
+    my int $i    = -1;
+    my int $mask = 0xFFFFFFFFFFFFFFFF;
+    nqp::bindpos_i($r,$i,nqp::bitxor_i(nqp::atpos_i($a,$i),$mask))
+      while nqp::islt_i($i = $i + 1,$elems);
+
+    $r
 }
 
-multi sub infix:<~&>(Blob:D $a, Blob:D $b) {
-    my $minlen := $a.elems min $b.elems;
-    my @anded-contents = $a.list[^$minlen] >>+&<< $b.list[^$minlen];
-    @anded-contents.append: 0 xx ($a.elems - @anded-contents.elems);
-    @anded-contents.append: 0 xx ($b.elems - @anded-contents.elems);
-    ($a.WHAT === $b.WHAT ?? $a !! Buf).new(@anded-contents);
+multi sub infix:<~&>(Blob:D \a, Blob:D \b) {
+    my $a := nqp::decont(a);
+    my $b := nqp::decont(b);
+    my int $elemsa = nqp::elems($a);
+    my int $elemsb = nqp::elems($b);
+    my int $do  = $elemsa > $elemsb ?? $elemsb !! $elemsa;
+    my int $max = $elemsa > $elemsb ?? $elemsa !! $elemsb;
+
+    my $r := nqp::create($a);
+    nqp::setelems($r,$max);
+
+    my int $i = -1;
+    nqp::bindpos_i($r,$i,
+      nqp::bitand_i(nqp::atpos_i($a,$i),nqp::atpos_i($b,$i)))
+      while nqp::islt_i($i = $i + 1,$do);
+
+    $i = $i - 1;    # went one too far
+    nqp::bindpos_i($r,$i,0) while nqp::islt_i($i = $i + 1,$max);
+
+    $r
 }
 
-multi sub infix:<~|>(Blob:D $a, Blob:D $b) {
-    my $minlen = $a.elems min $b.elems;
-    my @ored-contents = $a.list[^$minlen] «+|» $b.list[^$minlen];
-    @ored-contents.append: $a.list[@ored-contents.elems ..^ $a.elems];
-    @ored-contents.append: $b.list[@ored-contents.elems ..^ $b.elems];
-    ($a.WHAT === $b.WHAT ?? $a !! Buf).new(@ored-contents);
+multi sub infix:<~|>(Blob:D \a, Blob:D \b) {
+    my $a := nqp::decont(a);
+    my $b := nqp::decont(b);
+    my int $elemsa = nqp::elems($a);
+    my int $elemsb = nqp::elems($b);
+    my int $do  = $elemsa > $elemsb ?? $elemsb !! $elemsa;
+    my int $max = $elemsa > $elemsb ?? $elemsa !! $elemsb;
+    my $from   := $elemsa > $elemsb ?? $a      !! $b;
+
+    my $r := nqp::create($a);
+    nqp::setelems($r,$max);
+
+    my int $i = -1;
+    nqp::bindpos_i($r,$i,
+      nqp::bitor_i(nqp::atpos_i($a,$i),nqp::atpos_i($b,$i)))
+      while nqp::islt_i($i = $i + 1,$do);
+
+    $i = $i - 1;    # went one too far
+    nqp::bindpos_i($r,$i,nqp::atpos_i($from,$i))
+      while nqp::islt_i($i = $i + 1,$max);
+
+    $r
 }
 
-multi sub infix:<~^>(Blob:D $a, Blob:D $b) {
-    my $minlen = $a.elems min $b.elems;
-    my @xored-contents = $a.list[^$minlen] «+^» $b.list[^$minlen];
-    @xored-contents.append: $a.list[@xored-contents.elems ..^ $a.elems];
-    @xored-contents.append: $b.list[@xored-contents.elems ..^ $b.elems];
-    ($a.WHAT === $b.WHAT ?? $a !! Buf).new(@xored-contents);
+multi sub infix:<~^>(Blob:D \a, Blob:D \b) {
+    my $a := nqp::decont(a);
+    my $b := nqp::decont(b);
+    my int $elemsa = nqp::elems($a);
+    my int $elemsb = nqp::elems($b);
+    my int $do  = $elemsa > $elemsb ?? $elemsb !! $elemsa;
+    my int $max = $elemsa > $elemsb ?? $elemsa !! $elemsb;
+    my $from   := $elemsa > $elemsb ?? $a      !! $b;
+
+    my $r := nqp::create($a);
+    nqp::setelems($r,$max);
+
+    my int $i = -1;
+    nqp::bindpos_i($r,$i,
+      nqp::bitxor_i(nqp::atpos_i($a,$i),nqp::atpos_i($b,$i)))
+      while nqp::islt_i($i = $i + 1,$do);
+
+    $i = $i - 1;    # went one too far
+    nqp::bindpos_i($r,$i,nqp::atpos_i($from,$i))
+      while nqp::islt_i($i = $i + 1,$max);
+
+    $r
 }
 
 multi sub infix:<eqv>(Blob:D \a, Blob:D \b) {
