@@ -408,42 +408,25 @@ my class Rakudo::Internals {
     }
 
     our role ShapedArrayCommon {
-        proto method push(|c) {
-            self.DEFINITE
-                ?? X::IllegalOnFixedDimensionArray.new(operation => 'push').throw
-                !! self.Any::push(|c)
+        method !illegal($operation) {
+            X::IllegalOnFixedDimensionArray.new(:$operation).throw
         }
-        proto method append(|c) {
-            self.DEFINITE
-                ?? X::IllegalOnFixedDimensionArray.new(operation => 'append').throw
-                !! self.Any::append(|c)
-        }
+        multi method pop(::?CLASS:D:)    { self!illegal("pop")    }
+        multi method shift(::?CLASS:D:)  { self!illegal("shift")  }
+        multi method splice(::?CLASS:D: *@) { self!illegal("splice") }
+        multi method plan(::?CLASS:D: *@)   { self!illegal("plan")   }
 
-        multi method pop(::?CLASS:D:) {
-            X::IllegalOnFixedDimensionArray.new(operation => 'pop').throw
+        proto method push(|c) is nodal {
+            self.DEFINITE ?? self!illegal("push")    !! self.Any::push(|c)
         }
-
-        multi method shift(::?CLASS:D:) {
-            X::IllegalOnFixedDimensionArray.new(operation => 'shift').throw
+        proto method append(|c) is nodal {
+            self.DEFINITE ?? self!illegal("append")  !! self.Any::append(|c)
         }
-
-        proto method unshift(|c) {
-            self.DEFINITE
-                ?? X::IllegalOnFixedDimensionArray.new(operation => 'unshift').throw
-                !! self.Any::unshift(|c)
+        proto method unshift(|c) is nodal {
+            self.DEFINITE ?? self!illegal("unshift") !! self.Any::unshift(|c)
         }
-        proto method prepend(|c) {
-            self.DEFINITE
-                ?? X::IllegalOnFixedDimensionArray.new(operation => 'prepend').throw
-                !! self.Any::prepend(|c)
-        }
-
-        multi method splice(::?CLASS:D: *@) {
-            X::IllegalOnFixedDimensionArray.new(operation => 'splice').throw
-        }
-
-        multi method plan(::?CLASS:D: *@) {
-            X::IllegalOnFixedDimensionArray.new(operation => 'plan').throw
+        proto method prepend(|c) is nodal {
+            self.DEFINITE ?? self!illegal("prepend") !! self.Any::prepend(|c)
         }
 
         multi method keys(::?CLASS:D:) {
@@ -1166,6 +1149,14 @@ my class Rakudo::Internals {
     }
     method FILETEST-CHANGED(Str:D \abspath) {
         nqp::stat_time(nqp::unbox_s(abspath), nqp::const::STAT_CHANGETIME)
+    }
+
+    our class CompilerServices {
+        has Mu $!compiler;
+
+        method generate_accessor(str $name, Mu \package_type, str $attr_name, Mu \type, int $rw) {
+            $!compiler.generate_accessor($name, package_type, $attr_name, type, $rw);
+        }
     }
 }
 

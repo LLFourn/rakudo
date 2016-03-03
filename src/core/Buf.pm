@@ -63,21 +63,14 @@ my role Blob[::T = uint8] does Positional[T] does Stringy is repr('VMArray') is 
     }
 
     multi method AT-POS(Blob:D: int \pos) {
-        fail X::OutOfRange.new(
-          :what($*INDEX // 'Index'),
-          :got(pos),
-          :range("0..{nqp::elems(self)-1}")
-        ) if nqp::isge_i(pos,nqp::elems(self)) || nqp::islt_i(pos,0);
+        self!fail-range(pos)
+          if nqp::isge_i(pos,nqp::elems(self)) || nqp::islt_i(pos,0);
         nqp::atpos_i(self, pos);
     }
     multi method AT-POS(Blob:D: Int:D \pos) {
-        my int $pos = nqp::unbox_i(pos);
-        fail X::OutOfRange.new(
-          :what($*INDEX // 'Index'),
-          :got(pos),
-          :range("0..{nqp::elems(self)-1}")
-        ) if nqp::isge_i($pos,nqp::elems(self)) || nqp::islt_i($pos,0);
-        nqp::atpos_i(self,$pos);
+        self!fail-range(pos)
+          if nqp::isge_i(pos,nqp::elems(self)) || nqp::islt_i(pos,0);
+        nqp::atpos_i(self,pos);
     }
 
     multi method Bool(Blob:D:) { nqp::p6bool(nqp::elems(self)) }
@@ -329,6 +322,13 @@ my role Blob[::T = uint8] does Positional[T] does Stringy is repr('VMArray') is 
         }
         to
     }
+    method !fail-range($got) {
+        fail X::OutOfRange.new(
+          :what($*INDEX // 'Index'),
+          :$got,
+          :range("0..{nqp::elems(self)-1}")
+        );
+    }
     method !fail-typecheck-element(\action,\i,\got) {
         self!fail-typecheck(action ~ "ing element #" ~ i,got);
     }
@@ -434,37 +434,65 @@ my role Buf[::T = uint8] does Blob[T] is repr('VMArray') is array_type(T) {
 
     method reallocate(Buf:D: Int $elements) { nqp::setelems(self,$elements) }
 
-    multi method splice(Buf:D: int $got, Int $offset = 0, $size = Whatever) {
-        self!splice-native($got,$offset,$size)
+    my $empty := nqp::list_i;
+    multi method splice(Buf:D \SELF:) { my $buf = SELF; SELF = Buf.new; $buf }
+    multi method splice(Buf:D: Int $offset, $size = Whatever, :$SINK) {
+        my int $remove = self!remove($offset,$size);
+        if $SINK {
+            nqp::splice(self,$empty,$offset,$remove);
+            Nil
+        }
+        else {
+            my $result := $remove
+              ?? self.subbuf($offset,$remove)  # until something smarter
+              !! nqp::create(self);
+            nqp::splice(self,$empty,$offset,$remove);
+            $result
+        }
     }
-    multi method splice(Buf:D: Int $got, Int $offset = 0, $size = Whatever) {
-        self!splice-native($got,$offset,$size)
+    multi method splice(Buf:D: Int $offset, $size, int $got, :$SINK) {
+        self!splice-native($offset,$size,$got,$SINK)
     }
-    multi method splice(Buf:D: Mu $got, Int $offset = 0, $size = Whatever) {
+    multi method splice(Buf:D: Int $offset, $size, Int $got, :$SINK) {
+        self!splice-native($offset,$size,$got,$SINK)
+    }
+    multi method splice(Buf:D: Int $offset, $size, Mu $got, :$SINK) {
         self!fail-typecheck('splice',$got)
     }
-    multi method splice(Buf:D: Buf:D $buf, Int $offset = 0, $size = Whatever) {
-        self!splice-native($buf,$offset,$size)
+    multi method splice(Buf:D: Int $offset, $size, Buf:D $buf, :$SINK) {
+        self!splice-native($offset,$size,$buf,$SINK)
     }
-    multi method splice(Buf:D: int @values, Int $offset = 0, $size = Whatever) {
-        self!splice-native(@values,$offset,$size)
+    multi method splice(Buf:D: Int $offset, $size, int @values, :$SINK) {
+        self!splice-native($offset,$size,@values,$SINK)
     }
-    multi method splice(Buf:D: @values, Int $offset = 0, $size = Whatever) {
-        self!splice-native(
-          self!push-list("splic",nqp::create(self),@values),$offset,$size)
+    multi method splice(Buf:D: Int $offset, $size, @values, :$SINK) {
+        self!splice-native($offset,$size,
+          self!push-list("splic",nqp::create(self),@values),$SINK)
     }
 
-    method !splice-native(Buf:D: \x, int $offset, $size) {
-        my int $remove = nqp::istype($size,Whatever)
-          ?? nqp::elems(self) - $offset
-          !! nqp::istype($size,Int)
-            ?? $size
-            !! $size.Int;
-        my $result := $remove
-          ?? self.subbuf($offset,$remove)  # until something smarter
-          !! nqp::create(self);
-        nqp::splice(self,nqp::islist(x) ?? x !! nqp::list_i(x),$offset,$remove);
-        $result
+    method !remove(\offset,\size) {
+        nqp::istype(size,Whatever)
+          ?? nqp::elems(self) - offset
+          !! nqp::istype(size,Int)
+            ?? size
+            !! size.Int
+    }
+
+    method !splice-native(Buf:D: Int $offset, $size, \x, $SINK) {
+        my int $remove = self!remove($offset,$size);
+        if $SINK {
+            nqp::splice(
+              self,nqp::islist(x) ?? x !! nqp::list_i(x),$offset,$remove);
+            Nil
+        }
+        else {
+            my $result := $remove
+              ?? self.subbuf($offset,$remove)  # until something smarter
+              !! nqp::create(self);
+            nqp::splice(
+              self,nqp::islist(x) ?? x !! nqp::list_i(x),$offset,$remove);
+            $result
+        }
     }
 
     multi method push(Buf:D: int $got) { nqp::push_i(self,$got); self }
@@ -473,11 +501,7 @@ my role Buf[::T = uint8] does Blob[T] is repr('VMArray') is array_type(T) {
     multi method push(Buf:D: Buf:D $buf) {
         nqp::splice(self,$buf,nqp::elems(self),0)
     }
-    multi method push(Buf:D: int @values) {
-        nqp::splice(self,@values,nqp::elems(self),0)
-    }
-    multi method push(Buf:D:  @values) { self!pend(@values,'push') }
-    multi method push(Buf:D: *@values) { self!pend(@values,'push') }
+    multi method push(Buf:D: **@values) { self!pend(@values,'push') }
 
     multi method append(Buf:D: int $got) { nqp::push_i(self,$got); self }
     multi method append(Buf:D: Int $got) { nqp::push_i(self,$got); self }
@@ -494,10 +518,8 @@ my role Buf[::T = uint8] does Blob[T] is repr('VMArray') is array_type(T) {
     multi method unshift(Buf:D: int $got) { nqp::unshift_i(self,$got); self }
     multi method unshift(Buf:D: Int $got) { nqp::unshift_i(self,$got); self }
     multi method unshift(Buf:D: Mu $got) { self!fail-typecheck('unshift',$got) }
-    multi method unshift(Buf:D: Buf:D $buf)  { nqp::splice(self,$buf,0,0)    }
-    multi method unshift(Buf:D: int @values) { nqp::splice(self,@values,0,0) }
-    multi method unshift(Buf:D:  @values) { self!pend(@values,'unshift') }
-    multi method unshift(Buf:D: *@values) { self!pend(@values,'unshift') }
+    multi method unshift(Buf:D: Buf:D $buf) { nqp::splice(self,$buf,0,0) }
+    multi method unshift(Buf:D: **@values) { self!pend(@values,'unshift') }
 
     multi method prepend(Buf:D: int $got) { nqp::unshift_i(self,$got); self }
     multi method prepend(Buf:D: Int $got) { nqp::unshift_i(self,$got); self }
