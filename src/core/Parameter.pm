@@ -47,6 +47,11 @@ my class Parameter { # declared in BOOTSTRAP
     method name() {
         nqp::isnull_s($!variable_name) ?? Nil !! $!variable_name
     }
+    method usage-name() {
+        nqp::iseq_i(nqp::index('@$%&',nqp::substr($!variable_name,0,1)),-1)
+          ?? $!variable_name
+          !! nqp::substr($!variable_name,1)
+    }
 
     method sigil() {
         nqp::bitand_i($!flags,$SIG_ELEM_IS_CAPTURE)
@@ -154,19 +159,114 @@ my class Parameter { # declared in BOOTSTRAP
 
     method !flags() { $!flags }
 
-    multi method ACCEPTS(Parameter:D: Parameter:D $other) {
-        return False unless $other.type ~~ $.type;
-        return False unless
-            $!flags +& $SIG_ELEM_DEFINED_ONLY <= $other!flags +& $SIG_ELEM_DEFINED_ONLY
-            and $!flags +& $SIG_ELEM_UNDEFINED_ONLY <=
-                $other!flags +& $SIG_ELEM_UNDEFINED_ONLY;
-        if $.sub_signature {
-            return False unless $other.sub_signature ~~ $.sub_signature;
+    multi method ACCEPTS(Parameter:D: Parameter:D \other) {
+
+        # we're us
+        my \o := nqp::decont(other);
+        return True if self =:= o;
+
+        # nominal type is acceptable
+        if $!nominal_type.ACCEPTS(nqp::getattr(o,Parameter,'$!nominal_type')) {
+            my $oflags := nqp::getattr(o,Parameter,'$!flags');
+
+            # here not defined only, or both defined only
+            return False
+              unless nqp::isle_i(
+                nqp::bitand_i($!flags,$SIG_ELEM_DEFINED_ONLY),
+                nqp::bitand_i($oflags,$SIG_ELEM_DEFINED_ONLY))
+
+            # here not undefined only, or both undefined only
+              && nqp::isle_i(
+                nqp::bitand_i($!flags,$SIG_ELEM_UNDEFINED_ONLY),
+                nqp::bitand_i($oflags,$SIG_ELEM_UNDEFINED_ONLY))
+
+            # here is rw, or both is rw
+              && nqp::isle_i(
+                nqp::bitand_i($!flags,$SIG_ELEM_IS_RW),
+                nqp::bitand_i($oflags,$SIG_ELEM_IS_RW))
+
+            # here is part of MMD, or both are part of MMD
+              && nqp::isle_i(
+                nqp::bitand_i($!flags,$SIG_ELEM_MULTI_INVOCANT),
+                nqp::bitand_i($oflags,$SIG_ELEM_MULTI_INVOCANT));
         }
-        if $.named {
-            return False unless $other.named;
-            return False unless Set($other.named_names) (<=) Set($.named_names);
+
+        # nominal type not same
+        else {
+            return False;
         }
+
+        # we have sub sig and not the same
+        my $osub_signature := nqp::getattr(o,Parameter,'$!sub_signature');
+        if $!sub_signature {
+            return False
+              unless $osub_signature
+              && $!sub_signature.ACCEPTS($osub_signature);
+        }
+
+        # no sub sig, but other has one
+        elsif $osub_signature {
+            return False;
+        }
+
+        # have nameds here
+        my $onamed_names := nqp::getattr(o,Parameter,'$!named_names');
+        if $!named_names {
+
+            # nameds there
+            if $onamed_names {
+
+                # too many nameds there, can never be subset
+                my int $elems = nqp::elems($!named_names);
+                return False
+                  if nqp::isgt_i(nqp::elems($onamed_names),$elems);
+
+                # set up lookup hash
+                my $lookup := nqp::hash;
+                my int $i   = -1;
+                nqp::bindkey($lookup,nqp::atpos($!named_names,$i),1)
+                  while nqp::islt_i($i = nqp::add_i($i,1),$elems);
+
+                # make sure the other nameds are all here
+                $elems = nqp::elems($onamed_names);
+                $i     = -1;
+                return False unless
+                  nqp::existskey($lookup,nqp::atpos($onamed_names,$i))
+                  while nqp::islt_i($i = nqp::add_i($i,1),$elems);
+            }
+        }
+
+        # no nameds here, but we do there (implies not a subset)
+        elsif $onamed_names {
+            return False;
+        }
+
+        # we have a post constraint
+        if nqp::islist($!post_constraints) {
+
+            # callable means runtime check, so no match
+            return False
+              if nqp::istype(nqp::atpos($!post_constraints,0),Callable);
+
+            # other doesn't have a post constraint
+            my Mu $opc := nqp::getattr(o,Parameter,'$!post_constraints');
+            return False unless nqp::islist($opc);
+
+            # other post constraint is a Callable, so runtime check, so no match
+            return False if nqp::istype(nqp::atpos($opc,0),Callable);
+
+            # not same literal value
+            return False
+              unless nqp::atpos($!post_constraints,0).ACCEPTS(
+                nqp::atpos($opc,0));
+        }
+
+        # we don't, other *does* have a post constraint
+        elsif nqp::islist(nqp::getattr(o,Parameter,'$!post_constraints')) {
+            return False;
+        }
+
+        # it's a match!
         True;
     }
 
@@ -231,14 +331,6 @@ my class Parameter { # declared in BOOTSTRAP
         if $!flags +& $SIG_ELEM_IS_RAW {
             # Do not emit cases of anonymous '\' which we cannot reparse
             # This is all due to unspace.
-            if     not $.name
-               and $name eq '$'
-               and not $rest
-               and nqp::isnull($!post_constraints)
-               and not $default
-               and nqp::isnull($!sub_signature) {
-                    $name = '\\';
-            }
             $rest ~= ' is raw' unless $name.starts-with('\\');
         }
         unless nqp::isnull($!sub_signature) {
@@ -251,7 +343,7 @@ my class Parameter { # declared in BOOTSTRAP
             return Nil without $where;
             $rest ~= " $where";
         }
-        $rest ~= ' = { ... }' if $default;
+        $rest ~= " = $!default_value.perl()" if $default;
         if $name or $rest {
             $perl ~= ($perl ?? ' ' !! '') ~ $name;
         }
@@ -265,6 +357,79 @@ my class Parameter { # declared in BOOTSTRAP
     method set_why($why) {
         $!why := $why;
     }
+}
+
+multi sub infix:<eqv>(Parameter \a, Parameter \b) {
+
+    # we're us
+    return True if a =:= b;
+
+    # different nominal or coerce type
+    return False
+      unless nqp::iseq_s(
+          nqp::getattr(a,Parameter,'$!nominal_type').^name,
+          nqp::getattr(b,Parameter,'$!nominal_type').^name
+        )
+      && nqp::iseq_s(
+          nqp::getattr(a,Parameter,'$!coerce_type').^name,
+          nqp::getattr(b,Parameter,'$!coerce_type').^name
+        );
+
+    # different flags
+    return False
+      if nqp::isne_i(
+        nqp::getattr(a,Parameter,'$!flags'),
+        nqp::getattr(b,Parameter,'$!flags')
+      );
+
+    # first is named
+    if a.named {
+
+        # other is not named
+        return False unless b.named;
+
+        # not both actually have a name (e.g. *%_ doesn't)
+        my $anames := nqp::getattr(a.named_names,List,'$!reified');
+        my $bnames := nqp::getattr(b.named_names,List,'$!reified');
+        my int $adefined = nqp::defined($anames);
+        return False if nqp::isne_i($adefined,nqp::defined($bnames));
+
+        # not same basic name
+        return False
+          if $adefined
+          && nqp::isne_s(nqp::atpos($anames,0),nqp::atpos($bnames,0));
+    }
+
+    # unnamed vs named
+    elsif b.named {
+        return False;
+    }
+
+    # first has a post constraint
+    my Mu $pca := nqp::getattr(a,Parameter,'$!post_constraints');
+    if nqp::islist($pca) {
+
+        # callable means runtime check, so no match
+        return False if nqp::istype(nqp::atpos($pca,0),Callable);
+
+        # second doesn't have a post constraint
+        my Mu $pcb := nqp::getattr(b,Parameter,'$!post_constraints');
+        return False unless nqp::islist($pcb);
+
+        # second is a Callable, so runtime check, so no match
+        return False if nqp::istype(nqp::atpos($pcb,0),Callable);
+
+        # not same literal value
+        return False unless nqp::atpos($pca,0) eqv nqp::atpos($pcb,0);
+    }
+
+    # first doesn't, second *does* have a post constraint
+    elsif nqp::islist(nqp::getattr(b,Parameter,'$!post_constraints')) {
+        return False;
+    }
+
+    # it's a match
+    True
 }
 
 # vim: ft=perl6 expandtab sw=4
