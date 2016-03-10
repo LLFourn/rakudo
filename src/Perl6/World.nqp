@@ -456,7 +456,7 @@ class Perl6::World is HLL::World {
 
     # Finds the nearest signatured block and checks if it declares
     # a certain symbol.
-    method nearest_signatured_block_declares($symbol) {
+    method nearest_signatured_block_declares(str $symbol) {
         my $i := +@!BLOCKS;
         while $i > 0 {
             $i := $i - 1;
@@ -1195,7 +1195,7 @@ class Perl6::World is HLL::World {
     # the object to install. Does an immediate installation in the
     # compile-time block symbol table, and ensures that the installation
     # gets fixed up at runtime too.
-    method install_lexical_symbol($block, $name, $obj, :$clone) {
+    method install_lexical_symbol($block, str $name, $obj, :$clone) {
         # Install the object directly as a block symbol.
         if nqp::isnull(nqp::getobjsc($obj)) {
             self.add_object($obj);
@@ -1232,7 +1232,7 @@ class Perl6::World is HLL::World {
 
     # Installs a lexical symbol. Takes a QAST::Block object, name and
     # the type of container to install.
-    method install_lexical_container($block, $name, %cont_info, $descriptor, :$scope, :$package) {
+    method install_lexical_container($block, str $name, %cont_info, $descriptor, :$scope, :$package) {
         # Add to block, if needed. Note that it doesn't really have
         # a compile time value.
         my $var;
@@ -1539,7 +1539,7 @@ class Perl6::World is HLL::World {
     }
 
     # Hunts through scopes to find the type of a lexical.
-    method find_lexical_container_type($name) {
+    method find_lexical_container_type(str $name) {
         my int $i := +@!BLOCKS;
         while $i > 0 {
             $i := $i - 1;
@@ -1558,7 +1558,7 @@ class Perl6::World is HLL::World {
 
     # Hunts through scopes to find a lexical and returns if it is
     # known to be read-only.
-    method is_lexical_marked_ro($name) {
+    method is_lexical_marked_ro(str $name) {
         my int $i := +@!BLOCKS;
         while $i > 0 {
             $i := $i - 1;
@@ -2754,7 +2754,9 @@ class Perl6::World is HLL::World {
                 $!acc_sig_cache_type := $package_type;
             }
 
-            return $!w.create_code_object($block, 'Method', $sig);
+            my $code := $!w.create_code_object($block, 'Method', $sig);
+            $code.set_rw() if $rw;
+            return $code;
         }
     }
     method get_compiler_services() {
@@ -3548,7 +3550,7 @@ class Perl6::World is HLL::World {
         # If it's a single-part name, look through the lexical
         # scopes.
         if +@name == 1 {
-            my $final_name := @name[0];
+            my str $final_name := ~@name[0];
             if $*WANTEDOUTERBLOCK {
                 my $scope := $*WANTEDOUTERBLOCK;
                 while $scope {
@@ -3576,7 +3578,7 @@ class Perl6::World is HLL::World {
         # in GLOBALish.
         my $result := $*GLOBALish;
         if +@name >= 2 {
-            my $first := @name[0];
+            my str $first := ~@name[0];
             my int $i := $start_scope;
             while $i > 0 {
                 $i := $i - 1;
@@ -3642,11 +3644,12 @@ class Perl6::World is HLL::World {
         # block stack.
         if +@name == 1 && !$package_only {
             my int $i := +@!BLOCKS;
+            my str $first_name := ~@name[0];
             while $i > 0 {
                 $i := $i - 1;
-                my %sym := @!BLOCKS[$i].symbol(@name[0]);
+                my %sym := @!BLOCKS[$i].symbol($first_name);
                 if +%sym {
-                    return QAST::Var.new( :name(@name[0]), :scope(%sym<scope>) );
+                    return QAST::Var.new( :name($first_name), :scope(%sym<scope>) );
                 }
             }
         }
@@ -3700,7 +3703,7 @@ class Perl6::World is HLL::World {
 
     # Checks if the given name is known anywhere in the lexpad
     # and with lexical scope.
-    method is_lexical($name) {
+    method is_lexical(str $name) {
         my int $i := +@!BLOCKS;
         while $i > 0 {
             $i := $i - 1;
@@ -3771,7 +3774,7 @@ class Perl6::World is HLL::World {
 
 
     # Checks if the symbol is really an alias to an attribute.
-    method is_attr_alias($name) {
+    method is_attr_alias(str $name) {
         my int $i := +@!BLOCKS;
         while $i > 0 {
             $i := $i - 1;

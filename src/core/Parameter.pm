@@ -169,43 +169,54 @@ my class Parameter { # declared in BOOTSTRAP
         if $!nominal_type.ACCEPTS(nqp::getattr(o,Parameter,'$!nominal_type')) {
             my $oflags := nqp::getattr(o,Parameter,'$!flags');
 
-            # here not defined only, or both defined only
-            return False
-              unless nqp::isle_i(
-                nqp::bitand_i($!flags,$SIG_ELEM_DEFINED_ONLY),
-                nqp::bitand_i($oflags,$SIG_ELEM_DEFINED_ONLY))
+            # flags are not same, so we need to look more in depth
+            if nqp::isne_i($!flags,$oflags) {
 
-            # here not undefined only, or both undefined only
-              && nqp::isle_i(
-                nqp::bitand_i($!flags,$SIG_ELEM_UNDEFINED_ONLY),
-                nqp::bitand_i($oflags,$SIG_ELEM_UNDEFINED_ONLY))
+                # here not defined only, or both defined only
+                return False
+                  unless nqp::isle_i(
+                    nqp::bitand_i($!flags,$SIG_ELEM_DEFINED_ONLY),
+                    nqp::bitand_i($oflags,$SIG_ELEM_DEFINED_ONLY))
 
-            # here is rw, or both is rw
-              && nqp::isle_i(
-                nqp::bitand_i($!flags,$SIG_ELEM_IS_RW),
-                nqp::bitand_i($oflags,$SIG_ELEM_IS_RW))
+                # here not undefined only, or both undefined only
+                  && nqp::isle_i(
+                    nqp::bitand_i($!flags,$SIG_ELEM_UNDEFINED_ONLY),
+                    nqp::bitand_i($oflags,$SIG_ELEM_UNDEFINED_ONLY))
 
-            # here is part of MMD, or both are part of MMD
-              && nqp::isle_i(
-                nqp::bitand_i($!flags,$SIG_ELEM_MULTI_INVOCANT),
-                nqp::bitand_i($oflags,$SIG_ELEM_MULTI_INVOCANT));
+                # here is rw, or both is rw
+                  && nqp::isle_i(
+                    nqp::bitand_i($!flags,$SIG_ELEM_IS_RW),
+                    nqp::bitand_i($oflags,$SIG_ELEM_IS_RW))
+
+                # other is optional, or both are optional
+                  && nqp::isle_i(
+                    nqp::bitand_i($oflags,$SIG_ELEM_IS_OPTIONAL),
+                    nqp::bitand_i($!flags,$SIG_ELEM_IS_OPTIONAL))
+
+                # other is slurpy positional, or both are slurpy positional
+                  && nqp::isle_i(
+                    nqp::bitand_i($oflags,$SIG_ELEM_SLURPY_POS),
+                    nqp::bitand_i($!flags,$SIG_ELEM_SLURPY_POS))
+
+                # other is slurpy named, or both are slurpy named
+                  && nqp::isle_i(
+                    nqp::bitand_i($oflags,$SIG_ELEM_SLURPY_NAMED),
+                    nqp::bitand_i($!flags,$SIG_ELEM_SLURPY_NAMED))
+
+                # other is slurpy one arg, or both are slurpy one arg
+                  && nqp::isle_i(
+                    nqp::bitand_i($oflags,$SIG_ELEM_SLURPY_ONEARG),
+                    nqp::bitand_i($!flags,$SIG_ELEM_SLURPY_ONEARG))
+
+                # here is part of MMD, or both are part of MMD
+                  && nqp::isle_i(
+                    nqp::bitand_i($!flags,$SIG_ELEM_MULTI_INVOCANT),
+                    nqp::bitand_i($oflags,$SIG_ELEM_MULTI_INVOCANT));
+            }
         }
 
         # nominal type not same
         else {
-            return False;
-        }
-
-        # we have sub sig and not the same
-        my $osub_signature := nqp::getattr(o,Parameter,'$!sub_signature');
-        if $!sub_signature {
-            return False
-              unless $osub_signature
-              && $!sub_signature.ACCEPTS($osub_signature);
-        }
-
-        # no sub sig, but other has one
-        elsif $osub_signature {
             return False;
         }
 
@@ -238,6 +249,19 @@ my class Parameter { # declared in BOOTSTRAP
 
         # no nameds here, but we do there (implies not a subset)
         elsif $onamed_names {
+            return False;
+        }
+
+        # we have sub sig and not the same
+        my $osub_signature := nqp::getattr(o,Parameter,'$!sub_signature');
+        if $!sub_signature {
+            return False
+              unless $osub_signature
+              && $!sub_signature.ACCEPTS($osub_signature);
+        }
+
+        # no sub sig, but other has one
+        elsif $osub_signature {
             return False;
         }
 
